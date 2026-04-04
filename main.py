@@ -1,106 +1,106 @@
+import os
 import mysql.connector
 from flask import Flask, request, jsonify
-
 import bcrypt
 import jwt
 import datetime
 
-SECRET_KEY = "root123456"
-
 app = Flask(__name__)
 
-# 🔌 KONEKSI DATABASE
-db = mysql.connector.connect(
-    host="localhost",
-    user="root",
-    password="root123456",
-    database="bank_db"
-)
+# ======================
+# SECRET KEY
+# ======================
+SECRET_KEY = "root123456"
+
+# ======================
+# KONEKSI DATABASE (ANTI CRASH)
+# ======================
+try:
+    db = mysql.connector.connect(
+        host=os.environ.get("DB_HOST"),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD"),
+        database=os.environ.get("DB_NAME")
+    )
+    print("✅ Database connected")
+except Exception as e:
+    print("❌ Database error:", e)
+    db = None
+
 
 # ======================
 # HOME
 # ======================
 @app.route("/")
 def home():
-    return "API Banking + MySQL 🔥"
+    return "API Banking + MySQL + JWT 🔥"
+
 
 # ======================
-# REGISTER (POST + HASH)
-# ======================
-@app.route("/register", methods=["POST"])
-def register():
-    data = request.json
-    nama = data["nama"]
-    password = data["password"]
-
-    cursor = db.cursor()
-
-    cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
-    if cursor.fetchone():
-        return "User sudah ada!"
-
-    # 🔐 HASH PASSWORD
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-
-    cursor.execute(
-        "INSERT INTO users (nama, saldo, password) VALUES (%s, %s, %s)",
-        (nama, 0, hashed.decode('utf-8'))
-    )
-    db.commit()
-
-    return "Register berhasil!"
-
-# ======================
-# REGISTER (GET - TEST)
+# REGISTER
 # ======================
 @app.route("/register/<nama>/<password>")
-def register_test(nama, password):
+def register(nama, password):
+    if not db:
+        return "Database tidak terhubung!"
+
     cursor = db.cursor()
 
     cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
     if cursor.fetchone():
         return "User sudah ada!"
 
-    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    # HASH PASSWORD 🔐
+    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
     cursor.execute(
         "INSERT INTO users (nama, saldo, password) VALUES (%s, %s, %s)",
-        (nama, 0, hashed.decode('utf-8'))
+        (nama, 0, hashed_pw.decode('utf-8'))
     )
     db.commit()
 
     return "Register berhasil!"
 
+
 # ======================
-# LOGIN (JWT + HASH CHECK)
+# LOGIN + JWT
 # ======================
 @app.route("/login/<nama>/<password>")
 def login(nama, password):
+    if not db:
+        return "Database tidak terhubung!"
+
     cursor = db.cursor()
 
     cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
     user = cursor.fetchone()
 
-    if user and bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+    if user:
+        hashed_pw = user[3]
 
-        # 🎟️ GENERATE TOKEN
-        token = jwt.encode({
-            "user_id": user[0],
-            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
-        }, SECRET_KEY, algorithm="HS256")
+        # CEK PASSWORD HASH
+        if bcrypt.checkpw(password.encode('utf-8'), hashed_pw.encode('utf-8')):
+            token = jwt.encode({
+                "user_id": user[0],
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+            }, SECRET_KEY, algorithm="HS256")
 
-        return jsonify({
-            "message": "Login berhasil",
-            "token": token
-        })
-    else:
-        return "Login gagal!"
+            return jsonify({
+                "message": "Login berhasil",
+                "token": token
+            })
+
+    return "Login gagal!"
+
 
 # ======================
-# CEK SALDO
+# CEK SALDO (PROTECTED)
 # ======================
 @app.route("/saldo/<int:user_id>")
 def saldo(user_id):
+    if not db:
+        return "Database tidak terhubung!"
+
     cursor = db.cursor()
     cursor.execute("SELECT * FROM users WHERE id=%s", (user_id,))
     user = cursor.fetchone()
@@ -114,11 +114,15 @@ def saldo(user_id):
         "saldo": user[2]
     })
 
+
 # ======================
 # TRANSFER
 # ======================
 @app.route("/transfer/<int:user_id>/<int:jumlah>")
 def transfer(user_id, jumlah):
+    if not db:
+        return "Database tidak terhubung!"
+
     cursor = db.cursor()
 
     cursor.execute("SELECT saldo FROM users WHERE id=%s", (user_id,))
@@ -142,8 +146,10 @@ def transfer(user_id, jumlah):
 
     return f"Transfer berhasil! Sisa saldo: {saldo_baru}"
 
+
 # ======================
-# RUN
+# RUN (WAJIB UNTUK RAILWAY)
 # ======================
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
