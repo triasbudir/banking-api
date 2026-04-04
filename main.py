@@ -1,13 +1,19 @@
 import mysql.connector
 from flask import Flask, request, jsonify
 
+import bcrypt
+import jwt
+import datetime
+
+SECRET_KEY = "root123456"
+
 app = Flask(__name__)
 
 # 🔌 KONEKSI DATABASE
 db = mysql.connector.connect(
     host="localhost",
     user="root",
-    password="root123456",  # ✅ sudah diganti sesuai kamu
+    password="root123456",
     database="bank_db"
 )
 
@@ -19,7 +25,7 @@ def home():
     return "API Banking + MySQL 🔥"
 
 # ======================
-# REGISTER (POST)
+# REGISTER (POST + HASH)
 # ======================
 @app.route("/register", methods=["POST"])
 def register():
@@ -33,16 +39,19 @@ def register():
     if cursor.fetchone():
         return "User sudah ada!"
 
+    # 🔐 HASH PASSWORD
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
     cursor.execute(
         "INSERT INTO users (nama, saldo, password) VALUES (%s, %s, %s)",
-        (nama, 0, password)
+        (nama, 0, hashed.decode('utf-8'))
     )
     db.commit()
 
     return "Register berhasil!"
 
 # ======================
-# REGISTER (GET - TEST CEPAT)
+# REGISTER (GET - TEST)
 # ======================
 @app.route("/register/<nama>/<password>")
 def register_test(nama, password):
@@ -52,32 +61,37 @@ def register_test(nama, password):
     if cursor.fetchone():
         return "User sudah ada!"
 
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+
     cursor.execute(
         "INSERT INTO users (nama, saldo, password) VALUES (%s, %s, %s)",
-        (nama, 0, password)
+        (nama, 0, hashed.decode('utf-8'))
     )
     db.commit()
 
     return "Register berhasil!"
 
 # ======================
-# LOGIN
+# LOGIN (JWT + HASH CHECK)
 # ======================
 @app.route("/login/<nama>/<password>")
 def login(nama, password):
     cursor = db.cursor()
 
-    cursor.execute(
-        "SELECT * FROM users WHERE nama=%s AND password=%s",
-        (nama, password)
-    )
+    cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
     user = cursor.fetchone()
 
-    if user:
+    if user and bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+
+        # 🎟️ GENERATE TOKEN
+        token = jwt.encode({
+            "user_id": user[0],
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        }, SECRET_KEY, algorithm="HS256")
+
         return jsonify({
             "message": "Login berhasil",
-            "id": user[0],
-            "nama": user[1]
+            "token": token
         })
     else:
         return "Login gagal!"
