@@ -1,32 +1,26 @@
 import os
-import mysql.connector
-from flask import Flask, request, jsonify
+import datetime
 import bcrypt
 import jwt
-import datetime
+import mysql.connector
+from flask import Flask, request, jsonify
 
 app = Flask(__name__)
 
 # ======================
-# SECRET KEY
+# CONFIG
 # ======================
 SECRET_KEY = "root123456"
 
 # ======================
-# KONEKSI DATABASE (ANTI CRASH)
+# DATABASE CONNECTION
 # ======================
-try:
-    db = mysql.connector.connect(
-        host=os.environ.get("DB_HOST"),
-        user=os.environ.get("DB_USER"),
-        password=os.environ.get("DB_PASSWORD"),
-        database=os.environ.get("DB_NAME")
-    )
-    print("✅ Database connected")
-except Exception as e:
-    print("❌ Database error:", e)
-    db = None
-
+db = mysql.connector.connect(
+    host="localhost",   # nanti bisa diganti cloud
+    user="root",
+    password="root123456",
+    database="bank_db"
+)
 
 # ======================
 # HOME
@@ -35,72 +29,69 @@ except Exception as e:
 def home():
     return "API Banking + MySQL + JWT 🔥"
 
-
 # ======================
 # REGISTER
 # ======================
-@app.route("/register/<nama>/<password>")
-def register(nama, password):
-    if not db:
-        return "Database tidak terhubung!"
+@app.route("/register", methods=["POST"])
+def register():
+    data = request.json
+    nama = data["nama"]
+    password = data["password"]
 
     cursor = db.cursor()
 
+    # cek user
     cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
     if cursor.fetchone():
         return "User sudah ada!"
 
-    # HASH PASSWORD 🔐
-    hashed_pw = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+    # 🔐 HASH PASSWORD
+    hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
 
     cursor.execute(
         "INSERT INTO users (nama, saldo, password) VALUES (%s, %s, %s)",
-        (nama, 0, hashed_pw.decode('utf-8'))
+        (nama, 0, hashed.decode('utf-8'))
     )
     db.commit()
 
     return "Register berhasil!"
 
-
 # ======================
 # LOGIN + JWT
 # ======================
-@app.route("/login/<nama>/<password>")
-def login(nama, password):
-    if not db:
-        return "Database tidak terhubung!"
+@app.route("/login", methods=["POST"])
+def login():
+    data = request.json
+    nama = data["nama"]
+    password = data["password"]
 
     cursor = db.cursor()
-
     cursor.execute("SELECT * FROM users WHERE nama=%s", (nama,))
     user = cursor.fetchone()
 
-    if user:
-        hashed_pw = user[3]
+    if not user:
+        return "User tidak ditemukan!"
 
-        # CEK PASSWORD HASH
-        if bcrypt.checkpw(password.encode('utf-8'), hashed_pw.encode('utf-8')):
-            token = jwt.encode({
-                "user_id": user[0],
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
-            }, SECRET_KEY, algorithm="HS256")
+    # 🔐 CHECK HASH
+    if not bcrypt.checkpw(password.encode('utf-8'), user[3].encode('utf-8')):
+        return "Password salah!"
 
-            return jsonify({
-                "message": "Login berhasil",
-                "token": token
-            })
+    # 🎟️ JWT TOKEN
+    token = jwt.encode({
+        "user_id": user[0],
+        "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    }, SECRET_KEY, algorithm="HS256")
 
-    return "Login gagal!"
-
+    return jsonify({
+        "message": "Login berhasil",
+        "token": token
+    })
 
 # ======================
-# CEK SALDO (PROTECTED)
+# CEK SALDO
 # ======================
 @app.route("/saldo/<int:user_id>")
 def saldo(user_id):
-    if not db:
-        return "Database tidak terhubung!"
-
     cursor = db.cursor()
     cursor.execute("SELECT * FROM users WHERE id=%s", (user_id,))
     user = cursor.fetchone()
@@ -114,15 +105,11 @@ def saldo(user_id):
         "saldo": user[2]
     })
 
-
 # ======================
 # TRANSFER
 # ======================
 @app.route("/transfer/<int:user_id>/<int:jumlah>")
 def transfer(user_id, jumlah):
-    if not db:
-        return "Database tidak terhubung!"
-
     cursor = db.cursor()
 
     cursor.execute("SELECT saldo FROM users WHERE id=%s", (user_id,))
@@ -146,9 +133,8 @@ def transfer(user_id, jumlah):
 
     return f"Transfer berhasil! Sisa saldo: {saldo_baru}"
 
-
 # ======================
-# RUN (WAJIB UNTUK RAILWAY)
+# RUN (IMPORTANT FOR RAILWAY)
 # ======================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
